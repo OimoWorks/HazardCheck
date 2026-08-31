@@ -1,0 +1,21 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "区域区分": "警戒区域", "note": "ダミーデータ" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [132.79, 33.845],
+            [132.805, 33.845],
+            [132.805, 33.86],
+            [132.79, 33.86],
+            [132.79, 33.845]
+          ]
+        ]
+      }
+    }
+  ]
+}

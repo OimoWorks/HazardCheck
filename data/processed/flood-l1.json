@@ -1,0 +1,73 @@
+{
+  "type": "FeatureCollection",
+  "placeholder": true,
+  "generatedAt": "2026-08-31T14:02:12.952Z",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "rank": "0.5m以上3.0m未満"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              132.74,
+              33.82
+            ],
+            [
+              132.78,
+              33.82
+            ],
+            [
+              132.78,
+              33.85
+            ],
+            [
+              132.74,
+              33.85
+            ],
+            [
+              132.74,
+              33.82
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "rank": "3.0m以上5.0m未満"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              132.745,
+              33.825
+            ],
+            [
+              132.76,
+              33.825
+            ],
+            [
+              132.76,
+              33.84
+            ],
+            [
+              132.745,
+              33.84
+            ],
+            [
+              132.745,
+              33.825
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

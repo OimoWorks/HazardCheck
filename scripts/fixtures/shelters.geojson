@@ -1,0 +1,35 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "施設名称": "サンプル避難所A（ダミー）",
+        "洪水": 1,
+        "崖崩れ、土石流及び地滑り": 0,
+        "地震": 1
+      },
+      "geometry": { "type": "Point", "coordinates": [132.7657, 33.8395] }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "施設名称": "サンプル避難所B（ダミー）",
+        "洪水": 0,
+        "崖崩れ、土石流及び地滑り": 1,
+        "地震": 1
+      },
+      "geometry": { "type": "Point", "coordinates": [132.80, 33.855] }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "施設名称": "サンプル避難所C（ダミー）",
+        "洪水": 1,
+        "崖崩れ、土石流及び地滑り": 0,
+        "地震": 1
+      },
+      "geometry": { "type": "Point", "coordinates": [132.755, 33.833] }
+    }
+  ]
+}

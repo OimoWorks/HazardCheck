@@ -1,0 +1,21 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "N03_004": "松山市", "note": "ダミー境界（矩形近似・実データではありません）" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [132.70, 33.78],
+            [132.90, 33.78],
+            [132.90, 33.92],
+            [132.70, 33.92],
+            [132.70, 33.78]
+          ]
+        ]
+      }
+    }
+  ]
+}

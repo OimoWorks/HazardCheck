@@ -1,0 +1,5 @@
+{
+  "placeholder": true,
+  "generatedAt": "2026-08-31T14:02:12.956Z",
+  "note": "一部またはすべてのデータがダミー（動作確認用）です。data/raw/ に実データを配置して npm run build:hazard-data を再実行してください。"
+}
