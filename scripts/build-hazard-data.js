@@ -101,27 +101,35 @@ async function readShapefileFeatures(shpPath, dbfPath) {
   return features;
 }
 
+// ディレクトリ内の実データ（Shapefile/GeoJSON）を「すべて」読み込んで結合する。
+// flood-l2 のように、同じカテゴリに複数ファイル（例: 洪水予報河川・水位周知河川分と
+// その他の河川分）を配置する場合があるため、最初の1件だけを使うのではなく
+// ディレクトリ内の全ファイルをマージする。
 async function loadFeaturesFromDir(dir, fixtureFile, sourceLabel) {
   const files = listDataFiles(dir);
-  const shp = files.find((f) => extname(f).toLowerCase() === '.shp');
-  const geojson = files.find((f) => ['.geojson', '.json'].includes(extname(f).toLowerCase()));
+  const shpFiles = files.filter((f) => extname(f).toLowerCase() === '.shp');
+  const geojsonFiles = files.filter((f) => ['.geojson', '.json'].includes(extname(f).toLowerCase()));
 
-  if (shp) {
+  let features = [];
+
+  for (const shp of shpFiles) {
     const base = shp.slice(0, -4);
     const dbf = files.find((f) => f.toLowerCase() === `${base.toLowerCase()}.dbf`);
     if (!dbf) {
-      console.warn(`[${sourceLabel}] .shp はあるが対応する .dbf が見つからないためスキップ`);
-    } else {
-      console.log(`[${sourceLabel}] Shapefile を読み込み: ${shp}`);
-      const features = await readShapefileFeatures(join(dir, shp), join(dir, dbf));
-      return { features, placeholder: false };
+      console.warn(`[${sourceLabel}] ${shp} に対応する .dbf が見つからないためスキップ`);
+      continue;
     }
+    console.log(`[${sourceLabel}] Shapefile を読み込み: ${shp}`);
+    features = features.concat(await readShapefileFeatures(join(dir, shp), join(dir, dbf)));
   }
 
-  if (geojson) {
+  for (const geojson of geojsonFiles) {
     console.log(`[${sourceLabel}] GeoJSON を読み込み: ${geojson}`);
     const raw = JSON.parse(readFileSync(join(dir, geojson), 'utf-8'));
-    const features = raw.type === 'FeatureCollection' ? raw.features : [raw];
+    features = features.concat(raw.type === 'FeatureCollection' ? raw.features : [raw]);
+  }
+
+  if (features.length > 0) {
     return { features, placeholder: false };
   }
 
@@ -350,6 +358,48 @@ function simplifyGeometry(feature) {
   }
 }
 
+// 計画規模（L1）は「洪水予報河川・水位周知河川」区分にしか存在しないデータであり、
+// 「その他の河川」区分にはそもそも計画規模のデータ自体が作成されていない。
+// そのため、L1ポリゴンが1つも該当しない地点は、
+//   (a) 洪水予報河川・水位周知河川の流域内だが浸水想定なし＝「区域外」
+//   (b) その他の河川の流域（＝そもそもL1データが存在しない）＝「データなし」
+// のどちらかを区別する必要がある。ここでは (a)/(b) を分けるための簡易な近似として、
+// L1ポリゴン全体を包む凸包に一定のバッファを加えた範囲を「L1データが存在する河川の
+// 流域範囲」とみなす。町丁目境界等の正確な流域データではないため、境界付近では
+// 精度に限界がある（本番運用で誤差が問題になる場合は、実際の河川流域界データに
+// 差し替えることを検討する）。
+const FLOOD_L1_COVERAGE_BUFFER_KM = 1;
+
+function extractCoordinates(geometry) {
+  const coords = [];
+  const walk = (arr) => {
+    if (typeof arr[0] === 'number') {
+      coords.push(arr);
+      return;
+    }
+    arr.forEach(walk);
+  };
+  if (geometry && geometry.coordinates) walk(geometry.coordinates);
+  return coords;
+}
+
+function computeFloodL1Coverage(features) {
+  const points = [];
+  for (const f of features) {
+    for (const c of extractCoordinates(f.geometry)) {
+      points.push(turf.point(c));
+    }
+  }
+  if (points.length < 3) return null;
+  try {
+    const hull = turf.convex(turf.featureCollection(points));
+    if (!hull) return null;
+    return turf.buffer(hull, FLOOD_L1_COVERAGE_BUFFER_KM, { units: 'kilometers' });
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   mkdirSync(PROCESSED_DIR, { recursive: true });
 
@@ -389,6 +439,16 @@ async function main() {
       }),
     );
 
+    // 計画規模（L1）のみ、河川流域の近似カバレッジ範囲を併せて出力する
+    // （「区域外」と「データなし」の出し分けに使用。flood-l2 は洪水予報河川・
+    // 水位周知河川とその他の河川の両方をカバーするため対象外）。
+    const coverage = src.label === 'flood-l1' ? computeFloodL1Coverage(inBoundary) : null;
+    if (src.label === 'flood-l1') {
+      console.log(
+        `[${src.label}] 流域カバレッジ範囲: ${coverage ? '算出済み（凸包+' + FLOOD_L1_COVERAGE_BUFFER_KM + 'kmバッファ）' : '算出不可（ポリゴンが少なすぎる）'}`,
+      );
+    }
+
     writeFileSync(
       join(PROCESSED_DIR, src.out),
       JSON.stringify(
@@ -397,6 +457,7 @@ async function main() {
           placeholder,
           generatedAt: new Date().toISOString(),
           features: out,
+          ...(coverage ? { coverage } : {}),
         },
         null,
         placeholder ? 2 : 0,

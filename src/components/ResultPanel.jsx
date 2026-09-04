@@ -1,11 +1,19 @@
 import { HAZARD_PORTAL_URL, SAFEPIN_URL } from '../lib/constants.js';
 import { trackEvent } from '../lib/ga.js';
 
-function Row({ label, value }) {
+function Row({ label, value, muted }) {
   return (
     <div className="flex items-baseline justify-between gap-4 py-1.5 text-sm">
       <span className="text-slate-500 shrink-0">{label}</span>
-      <span className="font-semibold text-slate-800 text-right">{value}</span>
+      <span
+        className={
+          muted
+            ? 'text-slate-400 text-xs text-right'
+            : 'font-semibold text-slate-800 text-right'
+        }
+      >
+        {value}
+      </span>
     </div>
   );
 }
@@ -44,7 +52,7 @@ export default function ResultPanel({ locationLabel, result }) {
         </h2>
         <div className="mt-1 divide-y divide-slate-100">
           {flood.map((f) => (
-            <Row key={f.key} label={f.label} value={f.rank} />
+            <Row key={f.key} label={f.label} value={f.rank} muted={f.noData} />
           ))}
         </div>
       </div>

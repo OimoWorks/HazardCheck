@@ -20,16 +20,30 @@ function findMatchingFeature(featureCollection, lon, lat) {
   });
 }
 
+function isWithinFeature(feature, lon, lat) {
+  if (!feature) return false;
+  try {
+    return booleanPointInPolygon(point([lon, lat]), feature);
+  } catch {
+    return false;
+  }
+}
+
+export const FLOOD_L1_NO_DATA_RANK = 'データなし（この地点は計画規模の指定がない河川の流域です）';
+
 /**
  * 洪水浸水想定（計画規模・想定最大規模）を判定する。
- * @returns {{ key: string, label: string, hit: boolean, rank: string }[]}
+ * 計画規模（L1）は「洪水予報河川・水位周知河川」区分にしか作成されないデータのため、
+ * 該当ポリゴンがない場合でも、その河川の流域範囲内（=浸水想定なし）なら「区域外」、
+ * 範囲外（=そもそもL1データが存在しない「その他の河川」の流域）なら「データなし」を返す。
+ * @returns {{ key: string, label: string, hit: boolean, rank: string, noData?: boolean }[]}
  */
 export function lookupFlood(lon, lat) {
   return [
     {
       key: 'flood_l1',
       label: '計画規模（L1）',
-      ...matchFlood(floodL1, lon, lat),
+      ...matchFloodL1(lon, lat),
     },
     {
       key: 'flood_l2',
@@ -43,6 +57,19 @@ function matchFlood(fc, lon, lat) {
   const feature = findMatchingFeature(fc, lon, lat);
   if (!feature) return { hit: false, rank: '区域外' };
   return { hit: true, rank: feature.properties?.rank ?? '不明' };
+}
+
+function matchFloodL1(lon, lat) {
+  const feature = findMatchingFeature(floodL1, lon, lat);
+  if (feature) return { hit: true, rank: feature.properties?.rank ?? '不明' };
+
+  // coverage（L1データを持つ河川の流域の近似範囲）が無い場合は判定不能なので、
+  // 従来どおり「区域外」のみを返す（誤って「データなし」を大量表示しないための保険）。
+  if (!floodL1.coverage) return { hit: false, rank: '区域外' };
+
+  const withinCoverage = isWithinFeature(floodL1.coverage, lon, lat);
+  if (withinCoverage) return { hit: false, rank: '区域外' };
+  return { hit: false, rank: FLOOD_L1_NO_DATA_RANK, noData: true };
 }
 
 /**
