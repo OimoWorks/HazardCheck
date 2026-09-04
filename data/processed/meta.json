@@ -1,5 +1,10 @@
 {
-  "placeholder": true,
-  "generatedAt": "2026-08-31T14:02:12.956Z",
-  "note": "一部またはすべてのデータがダミー（動作確認用）です。data/raw/ に実データを配置して npm run build:hazard-data を再実行してください。"
+  "placeholder": {
+    "flood-l1": true,
+    "flood-l2": true,
+    "sediment": true,
+    "shelters": false
+  },
+  "generatedAt": "2026-09-04T06:08:09.801Z",
+  "note": "一部のデータがダミー（動作確認用）です。data/raw/ に実データを配置して npm run build:hazard-data を再実行してください。"
 }

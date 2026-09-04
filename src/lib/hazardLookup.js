@@ -85,12 +85,17 @@ export function diagnose(lon, lat) {
   const flood = lookupFlood(lon, lat);
   const sedimentResult = lookupSediment(lon, lat);
   const nearestShelter = findNearestShelter(lon, lat);
+  const placeholderByCategory = meta?.placeholder || {};
   return {
     flood,
     sediment: sedimentResult,
     nearestShelter,
     floodHit: flood.some((f) => f.hit),
     sedimentHit: sedimentResult.hit,
-    placeholder: Boolean(meta?.placeholder),
+    placeholder: {
+      flood: Boolean(placeholderByCategory['flood-l1'] || placeholderByCategory['flood-l2']),
+      sediment: Boolean(placeholderByCategory.sediment),
+      shelters: Boolean(placeholderByCategory.shelters),
+    },
   };
 }

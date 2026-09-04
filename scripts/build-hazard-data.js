@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-// data/raw/ に配置された生データ（Shapefile または GeoJSON）を読み込み、
-// 松山市域に絞り込んだ軽量な data/processed/*.json を生成するバッチスクリプト。
+// data/raw/ に配置された生データを読み込み、松山市域に絞り込んだ軽量な
+// data/processed/*.json を生成するバッチスクリプト。
 //
 // 使い方: npm run build:hazard-data
 //
+// - 洪水浸水想定・土砂災害警戒区域・行政区域境界: 国土数値情報の Shapefile / GeoJSON
+// - 避難所: 国土地理院 指定緊急避難場所データポータル（hinanmap.gsi.go.jp）が配布する
+//   CSV（指定避難所データ・指定緊急避難場所データ）。詳細は data/raw/shelters/README.md
+//
 // data/raw/<各ソース>/ に実データが見つからない場合は、動作確認用の
-// ダミーGeoJSON（scripts/fixtures/）を代わりに使用し、生成物に
+// ダミーデータ（scripts/fixtures/）を代わりに使用し、生成物に
 // placeholder フラグを付与する。実データを配置した後に再実行すること。
 //
 // ⚠️ 属性列名について:
@@ -182,6 +186,132 @@ function resolveDisasterTypes(properties) {
   return types;
 }
 
+// --- 避難所CSV（国土地理院 指定緊急避難場所データポータル配布形式）のパース ---
+// 配布CSVは「指定避難所データ」（洪水/地震等の対応フラグを持たない、長期滞在向け）と
+// 「指定緊急避難場所データ」（災害種別ごとの対応フラグを持つ）の2種類がある。
+// ファイル名（例: 38201_1.csv / 38201_2.csv）ではなく、ヘッダー列の内容で種別を判定する。
+
+const EMERGENCY_SHELTER_DISASTER_COLUMNS = {
+  洪水: '洪水',
+  '崖崩れ・土石流・地すべり': '崖崩れ、土石流及び地滑り',
+  高潮: '高潮',
+  地震: '地震',
+  津波: '津波',
+  大規模な火事: '大規模な火事',
+  内水氾濫: '内水氾濫',
+  火山現象: '火山現象',
+};
+
+function stripBom(text) {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+// 簡易CSVパーサ（RFC4180準拠。ダブルクォート囲み・エスケープ・改行入りフィールドに対応）。
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(field);
+      field = '';
+    } else if (ch === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else if (ch === '\r') {
+      // 改行はLF側で処理するため無視
+    } else {
+      field += ch;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((r) => !(r.length === 1 && r[0] === ''));
+}
+
+function csvToObjects(text) {
+  const rows = parseCsv(stripBom(text));
+  if (rows.length === 0) return [];
+  const [header, ...body] = rows;
+  return body.map((r) => Object.fromEntries(header.map((h, idx) => [h, r[idx] ?? ''])));
+}
+
+function isTruthyCsvFlag(value) {
+  return value === '1' || value === 1;
+}
+
+function makePointFeature(lng, lat) {
+  return { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [lng, lat] } };
+}
+
+/**
+ * data/raw/shelters/ 内のCSVファイルを読み込み、避難所レコードの配列を返す。
+ * CSVが1件も見つからない場合は null を返す（呼び出し側でダミーにフォールバックする）。
+ */
+function loadShelterRecordsFromCsvDir(dir) {
+  const files = listDataFiles(dir).filter((f) => extname(f).toLowerCase() === '.csv');
+  if (files.length === 0) return null;
+
+  const records = [];
+  for (const file of files) {
+    const objects = csvToObjects(readFileSync(join(dir, file), 'utf-8'));
+    if (objects.length === 0) continue;
+    const headers = Object.keys(objects[0]);
+    const isEmergencyShelterData = headers.includes('洪水') && headers.includes('地震');
+
+    console.log(
+      `[shelters] ${file} を読み込み: ${objects.length}件 (${isEmergencyShelterData ? '指定緊急避難場所データ' : '指定避難所データ'})`,
+    );
+
+    for (const row of objects) {
+      const lat = Number.parseFloat(row['緯度']);
+      const lng = Number.parseFloat(row['経度']);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      const name = row['施設・場所名'] || '名称不明の避難所';
+
+      if (isEmergencyShelterData) {
+        const disasterTypes = Object.entries(EMERGENCY_SHELTER_DISASTER_COLUMNS)
+          .filter(([, column]) => isTruthyCsvFlag(row[column]))
+          .map(([label]) => label);
+        records.push({ name, lat, lng, disasterTypes, category: '指定緊急避難場所' });
+      } else {
+        records.push({
+          name,
+          lat,
+          lng,
+          disasterTypes: [],
+          category: '指定避難所',
+          acceptedGroups: row['受入対象者'] || undefined,
+        });
+      }
+    }
+  }
+  return records;
+}
+
 function boundaryFeatures(rawFeatures) {
   const nameFieldCandidates = ['N03_004', 'CITY_NAME', '市区町村名', 'city'];
   const named = rawFeatures.filter((f) =>
@@ -223,14 +353,14 @@ function simplifyGeometry(feature) {
 async function main() {
   mkdirSync(PROCESSED_DIR, { recursive: true });
 
-  let anyPlaceholder = false;
+  const placeholderByCategory = {};
 
   const boundaryLoad = await loadFeaturesFromDir(
     join(RAW_DIR, 'matsuyama-boundary'),
     'matsuyama-boundary.geojson',
     'matsuyama-boundary',
   );
-  anyPlaceholder ||= boundaryLoad.placeholder;
+  const boundaryPlaceholder = boundaryLoad.placeholder;
   const boundary = boundaryFeatures(boundaryLoad.features);
   console.log(`松山市境界: ${boundary.length} 地物`);
 
@@ -241,12 +371,13 @@ async function main() {
   ];
 
   for (const src of floodSources) {
-    const { features, placeholder } = await loadFeaturesFromDir(
+    const { features, placeholder: ownPlaceholder } = await loadFeaturesFromDir(
       join(RAW_DIR, src.dir),
       src.fixture,
       src.label,
     );
-    anyPlaceholder ||= placeholder;
+    const placeholder = ownPlaceholder || boundaryPlaceholder;
+    placeholderByCategory[src.label] = placeholder;
     logPropertyKeys(src.label, features);
 
     const inBoundary = features.filter((f) => intersectsBoundary(f, boundary));
@@ -282,6 +413,7 @@ async function main() {
   ];
 
   const sedimentFeatures = [];
+  let sedimentPlaceholder = boundaryPlaceholder;
   for (const src of sedimentSources) {
     const { features, placeholder } = await loadFeaturesFromDir(
       join(RAW_DIR, src.dir),
@@ -289,7 +421,7 @@ async function main() {
       src.dir,
     );
     if (features.length === 0) continue;
-    anyPlaceholder ||= placeholder;
+    sedimentPlaceholder ||= placeholder;
     logPropertyKeys(src.dir, features);
 
     const inBoundary = features.filter((f) => intersectsBoundary(f, boundary));
@@ -305,12 +437,14 @@ async function main() {
     }
   }
 
+  placeholderByCategory.sediment = sedimentPlaceholder;
+
   writeFileSync(
     join(PROCESSED_DIR, 'sediment.json'),
     JSON.stringify(
       {
         type: 'FeatureCollection',
-        placeholder: anyPlaceholder,
+        placeholder: sedimentPlaceholder,
         generatedAt: new Date().toISOString(),
         features: sedimentFeatures,
       },
@@ -320,36 +454,62 @@ async function main() {
   );
   console.log(`[sediment] -> sediment.json (${sedimentFeatures.length} 地物)`);
 
-  // --- 指定緊急避難場所 ---
-  const shelterLoad = await loadFeaturesFromDir(
-    join(RAW_DIR, 'shelters'),
-    'shelters.geojson',
-    'shelters',
-  );
-  anyPlaceholder ||= shelterLoad.placeholder;
-  logPropertyKeys('shelters', shelterLoad.features);
+  // --- 避難所（国土地理院 指定緊急避難場所データポータル CSV） ---
+  const shelterCsvRecords = loadShelterRecordsFromCsvDir(join(RAW_DIR, 'shelters'));
 
-  const shelters = shelterLoad.features
-    .filter((f) => f.geometry && f.geometry.type === 'Point')
-    .filter((f) => pointInBoundary(f, boundary))
-    .map((f) => ({
-      name: resolveShelterName(f.properties || {}),
-      lat: f.geometry.coordinates[1],
-      lng: f.geometry.coordinates[0],
-      disasterTypes: resolveDisasterTypes(f.properties || {}),
+  let shelters;
+  let sheltersPlaceholder;
+  if (shelterCsvRecords) {
+    // ポータルは市区町村コード（38201=松山市）で問い合わせ済みのCSVを配布するため、
+    // 松山市域の絞り込みは既に完了している。行政区域境界（ダミーの場合がある）で
+    // 再フィルタすると、本物の避難所データがダミー境界の形状によって誤って
+    // 除外されてしまうため、境界が実データのときのみ整合性チェックとして適用する。
+    const filtered = boundaryPlaceholder
+      ? shelterCsvRecords
+      : shelterCsvRecords.filter((r) => pointInBoundary(makePointFeature(r.lng, r.lat), boundary));
+    shelters = filtered.map(({ name, lat, lng, disasterTypes, category, acceptedGroups }) => ({
+      name,
+      lat,
+      lng,
+      disasterTypes,
+      category,
+      ...(acceptedGroups ? { acceptedGroups } : {}),
     }));
+    sheltersPlaceholder = false;
+    console.log(
+      `[shelters] CSV実データ ${shelterCsvRecords.length}件 中、${shelters.length}件を採用${boundaryPlaceholder ? '（行政区域境界がダミーのため境界フィルタは未適用、CSV側の市区町村コード絞り込みを信頼）' : ''}`,
+    );
+  } else {
+    console.warn(
+      '[shelters] data/raw/shelters/ にCSVが見つからないため、動作確認用のダミーデータを使用します（本番公開前に実データを配置して再実行してください）',
+    );
+    const raw = JSON.parse(readFileSync(join(FIXTURES_DIR, 'shelters.geojson'), 'utf-8'));
+    logPropertyKeys('shelters', raw.features);
+    shelters = raw.features
+      .filter((f) => f.geometry && f.geometry.type === 'Point')
+      .filter((f) => pointInBoundary(f, boundary))
+      .map((f) => ({
+        name: resolveShelterName(f.properties || {}),
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+        disasterTypes: resolveDisasterTypes(f.properties || {}),
+      }));
+    sheltersPlaceholder = true;
+  }
+  placeholderByCategory.shelters = sheltersPlaceholder;
 
   writeFileSync(join(PROCESSED_DIR, 'shelters.json'), JSON.stringify(shelters, null, 2));
-  console.log(`[shelters] -> shelters.json (${shelters.length} 件)`);
+  console.log(`[shelters] -> shelters.json (${shelters.length} 件, placeholder=${sheltersPlaceholder})`);
 
+  const anyPlaceholder = Object.values(placeholderByCategory).some(Boolean);
   writeFileSync(
     join(PROCESSED_DIR, 'meta.json'),
     JSON.stringify(
       {
-        placeholder: anyPlaceholder,
+        placeholder: placeholderByCategory,
         generatedAt: new Date().toISOString(),
         note: anyPlaceholder
-          ? '一部またはすべてのデータがダミー（動作確認用）です。data/raw/ に実データを配置して npm run build:hazard-data を再実行してください。'
+          ? '一部のデータがダミー（動作確認用）です。data/raw/ に実データを配置して npm run build:hazard-data を再実行してください。'
           : '実データから生成されました。',
       },
       null,
@@ -358,8 +518,11 @@ async function main() {
   );
 
   if (anyPlaceholder) {
+    const dummyCategories = Object.entries(placeholderByCategory)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
     console.warn(
-      '\n⚠️ 一部のデータソースでダミーデータが使用されました。本番公開前に data/raw/ に実データを配置し、再度 npm run build:hazard-data を実行してください。\n',
+      `\n⚠️ 以下のデータソースでダミーデータが使用されました: ${dummyCategories.join(', ')}\n   本番公開前に data/raw/ に実データを配置し、再度 npm run build:hazard-data を実行してください。\n`,
     );
   } else {
     console.log('\n✅ すべてのソースで実データが使用されました。');

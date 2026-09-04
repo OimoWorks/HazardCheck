@@ -10,8 +10,17 @@ function Row({ label, value }) {
   );
 }
 
+const PLACEHOLDER_CATEGORY_LABELS = {
+  flood: '洪水浸水想定',
+  sediment: '土砂災害警戒区域',
+  shelters: '避難所',
+};
+
 export default function ResultPanel({ locationLabel, result }) {
   const { flood, sediment, nearestShelter, placeholder } = result;
+  const dummyCategories = Object.entries(placeholder || {})
+    .filter(([, isDummy]) => isDummy)
+    .map(([key]) => PLACEHOLDER_CATEGORY_LABELS[key] || key);
 
   function handleSafepinClick() {
     trackEvent('hazard_safepin_click');
@@ -19,9 +28,9 @@ export default function ResultPanel({ locationLabel, result }) {
 
   return (
     <section className="mx-4 mt-4 rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      {placeholder && (
+      {dummyCategories.length > 0 && (
         <div className="bg-amber-50 text-amber-800 text-xs px-4 py-2 border-b border-amber-200">
-          ⚠️ 現在は動作確認用のダミーデータで結果を表示しています。実際のハザード情報ではありません。
+          ⚠️ {dummyCategories.join('・')}のデータは動作確認用のダミーです。実際のハザード情報ではありません。
         </div>
       )}
 
@@ -61,6 +70,9 @@ export default function ResultPanel({ locationLabel, result }) {
             <p className="mt-1 text-sm font-semibold text-slate-800">
               {nearestShelter.name}（約{nearestShelter.distanceMeters}m）
             </p>
+            {nearestShelter.category && (
+              <p className="text-xs text-slate-500 mt-0.5">{nearestShelter.category}</p>
+            )}
             <a
               href={SAFEPIN_URL}
               target="_blank"
