@@ -64,7 +64,11 @@ export default function ResultPanel({ locationLabel, result }) {
         <div className="mt-1">
           <Row
             label="指定状況"
-            value={sediment.hit ? `区域内（${sediment.types.join('・')}）` : '区域外'}
+            value={
+              sediment.hit
+                ? `区域内（${[...sediment.types, sediment.zoneType].filter(Boolean).join('・')}）`
+                : '区域外'
+            }
           />
         </div>
       </div>

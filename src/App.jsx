@@ -22,8 +22,8 @@ export default function App() {
     initGA();
   }, []);
 
-  function runDiagnosis(lat, lon, label, inputMethod) {
-    const diagnosis = diagnose(lon, lat);
+  async function runDiagnosis(lat, lon, label, inputMethod) {
+    const diagnosis = await diagnose(lon, lat);
     setResult(diagnosis);
     setLocationLabel(label);
     trackEvent('hazard_search', { input_method: inputMethod });
@@ -39,7 +39,7 @@ export default function App() {
     try {
       const geo = await geocodeAddress(address);
       setAddressText(address);
-      runDiagnosis(geo.lat, geo.lon, geo.matchedTitle || address, 'text');
+      await runDiagnosis(geo.lat, geo.lon, geo.matchedTitle || address, 'text');
     } catch (err) {
       setResult(null);
       setError(err.message || '住所が見つかりませんでした。');
@@ -56,7 +56,7 @@ export default function App() {
       const { address } = await reverseGeocode(lat, lon);
       const label = address || `緯度${lat.toFixed(5)}, 経度${lon.toFixed(5)}`;
       setAddressText(label);
-      runDiagnosis(lat, lon, label, 'map');
+      await runDiagnosis(lat, lon, label, 'map');
     } finally {
       setLoading(false);
     }

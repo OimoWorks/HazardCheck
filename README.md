@@ -50,37 +50,39 @@
 
 ## ⚠️ 本番公開前に必ず行うこと（重要）
 
-`data/processed/meta.json` の `placeholder` はカテゴリごと（`flood_l1` / `flood_l2` /
+`data/processed/meta.json` の `placeholder` はカテゴリごと（`flood-l1` / `flood-l2` /
 `sediment` / `shelters`）にダミーデータかどうかを保持しており、`true` のカテゴリは
 アプリの結果パネルにも警告バナーで表示される。現時点の状態:
 
 | カテゴリ | 状態 |
 |---|---|
-| 避難所（`shelters.json`） | ✅ **実データ**（国土地理院 指定緊急避難場所データポータルの松山市分CSVから生成済み） |
+| 避難所（`shelters.json`） | ✅ **実データ**（国土地理院 指定緊急避難場所データポータルの松山市分CSVから生成済み、829件） |
+| 土砂災害警戒区域（`sediment.json`） | ✅ **実データ**（国土数値情報 A33データから松山市分を抽出、3,109件） |
 | 洪水浸水想定（`flood-l1.json` / `flood-l2.json`） | ⚠️ ダミー（`scripts/fixtures/` の適当なポリゴン） |
-| 土砂災害警戒区域（`sediment.json`） | ⚠️ ダミー（`scripts/fixtures/` の適当なポリゴン） |
 
-洪水・土砂災害区域については、本番公開前に以下の手順で実データに差し替えること。
+洪水浸水想定区域については、本番公開前に以下の手順で実データに差し替えること。
 
 ### 1. 生データを手動でダウンロードして配置する
 
-**洪水浸水想定・土砂災害警戒区域・行政区域境界**は、国土数値情報ダウンロードサービス
+**洪水浸水想定・行政区域境界**は、国土数値情報ダウンロードサービス
 （<https://nlftp.mlit.go.jp/ksj/>）から、以下のデータの**愛媛県分**（行政区域データのみ
 都道府県全体でも可）をダウンロードし、それぞれのディレクトリに配置する。
 各ディレクトリの `README.md` に詳しい手順を記載している。
 
 | 配置先 | データ名 |
 |---|---|
-| `data/raw/flood-l1/` | 洪水浸水想定区域データ（計画規模） |
-| `data/raw/flood-l2/` | 洪水浸水想定区域データ（想定最大規模） |
-| `data/raw/sediment-steep/` | 土砂災害警戒区域データ（急傾斜地の崩壊） |
-| `data/raw/sediment-debris/` | 土砂災害警戒区域データ（土石流） |
-| `data/raw/sediment-landslide/` | 土砂災害警戒区域データ（地すべり） |
+| `data/raw/flood-l1/` | 洪水浸水想定区域データ（計画規模。洪水予報河川・水位周知河川区分のみ存在） |
+| `data/raw/flood-l2/` | 洪水浸水想定区域データ（想定最大規模。両区分とも存在） |
 | `data/raw/matsuyama-boundary/` | 行政区域データ（N03、松山市域の絞り込み用） |
 
 Shapefile（.shp/.dbf/.shx/.prj一式）でもGeoJSONでもよい（GeoJSONが選べるなら推奨）。
 
-**避難所**は既に実データ配置済みだが、更新する場合は国土地理院 指定緊急避難場所データ
+**土砂災害警戒区域**は既に実データ配置済み（国土数値情報「土砂災害警戒区域データ（A33）」の
+GeoJSON、`data/raw/sediment/`）。更新する場合の手順は `data/raw/sediment/README.md` を参照。
+1ファイルに急傾斜地の崩壊・土石流・地すべりの3種類が属性値（`A33_001`）で混在しており、
+区域区分（`A33_002`）も 指定済み(1・2) / 指定前・基礎調査結果(3・4) の4段階を区別する。
+
+**避難所**も既に実データ配置済みだが、更新する場合は国土地理院 指定緊急避難場所データ
 ポータル（<https://hinanmap.gsi.go.jp/hinanjocheck/>）から松山市分（市区町村コード
 `38201`）のCSV2種類を再取得し、`data/raw/shelters/` に置き換える。手順は
 `data/raw/shelters/README.md` を参照。
@@ -104,10 +106,15 @@ npm run build:hazard-data
 想定列名で解決できなかった場合は、`scripts/build-hazard-data.js` 内の
 `FLOOD_RANK_FIELD_CANDIDATES` 等にコンソールで確認した実際の列名を追記して再実行すること。
 
-`data/raw/flood-*/` `data/raw/sediment-*/` `data/raw/matsuyama-boundary/` に実データが
+`data/raw/flood-*/` `data/raw/sediment/` `data/raw/matsuyama-boundary/` に実データが
 1件も見つからない場合は、動作確認用のダミーGeoJSON（`scripts/fixtures/`）で代替され、
 そのカテゴリの `placeholder` が `true` になる。避難所は専用のCSVパーサーで処理され、
 `data/raw/shelters/` にCSVが1件もない場合のみダミーにフォールバックする。
+
+土砂災害警戒区域は、`data/raw/sediment/` の地物が持つ所在地属性（`A33_006` 等）に
+「松山市」を含むかどうかで絞り込む（この属性で絞り込めた場合は、行政区域境界が
+ダミーであっても実データ扱いになる）。属性による絞り込みができないデータの場合のみ、
+行政区域境界とのポリゴン交差判定にフォールバックする。
 
 ### 3. 松山市内の既知地点で手動検証する
 

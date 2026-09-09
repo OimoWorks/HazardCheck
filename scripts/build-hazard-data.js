@@ -53,13 +53,26 @@ const FLOOD_RANK_CODE_MAP = {
   6: '20.0m以上',
 };
 
-const SEDIMENT_TYPE_KEYWORDS = {
-  急傾斜地の崩壊: ['急傾斜'],
-  土石流: ['土石流'],
-  地すべり: ['地すべり', '地滑り'],
+// 土砂災害警戒区域データ（国土数値情報 A33）は、3種類の現象・区域区分が
+// 1ファイル内に属性値として混在する形式で配布される。
+const SEDIMENT_PHENOMENON_FIELD_CANDIDATES = ['A33_001', '現象の種類', 'phenomenonType'];
+const SEDIMENT_ZONE_FIELD_CANDIDATES = ['A33_002', '区域区分', 'zoneType'];
+const SEDIMENT_CITY_FIELD_CANDIDATES = ['A33_006', '所在地', '市区町村名', 'city'];
+
+const PHENOMENON_TYPE_MAP = {
+  1: '急傾斜地の崩壊',
+  2: '土石流',
+  3: '地すべり',
 };
 
-const SEDIMENT_ZONE_FIELD_CANDIDATES = ['区域区分', '警戒区域区分', 'AREA_TYPE'];
+// コード3・4は「指定前（都道府県による基礎調査結果の公表段階）」であり、
+// コード1・2の「指定済み」とは法的な位置づけが異なるため、文言を明確に分ける。
+const ZONE_TYPE_MAP = {
+  1: '警戒区域',
+  2: '特別警戒区域',
+  3: '警戒区域（指定前・基礎調査結果）',
+  4: '特別警戒区域（指定前・基礎調査結果）',
+};
 
 const SHELTER_NAME_FIELD_CANDIDATES = [
   '施設名称',
@@ -161,19 +174,45 @@ function resolveFloodRank(properties) {
   return '不明';
 }
 
-function resolveSedimentZone(properties) {
-  for (const key of SEDIMENT_ZONE_FIELD_CANDIDATES) {
-    if (key in properties && properties[key]) return String(properties[key]);
+// A33_001（現象の種類）を解決する。コード値（1/2/3）優先、既に日本語ラベルの
+// 場合はそのまま使う。
+function resolvePhenomenonType(properties) {
+  for (const key of SEDIMENT_PHENOMENON_FIELD_CANDIDATES) {
+    if (key in properties && properties[key] !== null && properties[key] !== '') {
+      const raw = properties[key];
+      if (PHENOMENON_TYPE_MAP[raw]) return { code: Number(raw), label: PHENOMENON_TYPE_MAP[raw] };
+      const str = String(raw);
+      if (Object.values(PHENOMENON_TYPE_MAP).includes(str)) return { code: null, label: str };
+    }
   }
-  return null;
+  return { code: null, label: '不明' };
 }
 
-function detectSedimentTypeFromProperties(properties) {
-  const values = Object.values(properties || {}).map((v) => String(v ?? ''));
-  for (const [type, keywords] of Object.entries(SEDIMENT_TYPE_KEYWORDS)) {
-    if (values.some((v) => keywords.some((kw) => v.includes(kw)))) return type;
+// A33_002（区域区分）を解決する。コード3・4（指定前）はコード1・2（指定済み）と
+// 混同しないよう、ZONE_TYPE_MAP で文言を明確に分けている。
+function resolveZoneType(properties) {
+  for (const key of SEDIMENT_ZONE_FIELD_CANDIDATES) {
+    if (key in properties && properties[key] !== null && properties[key] !== '') {
+      const raw = properties[key];
+      if (ZONE_TYPE_MAP[raw]) return { code: Number(raw), label: ZONE_TYPE_MAP[raw] };
+      const str = String(raw);
+      if (Object.values(ZONE_TYPE_MAP).includes(str)) return { code: null, label: str };
+    }
   }
-  return null;
+  return { code: null, label: null };
+}
+
+// A33_006 等の所在地属性に「松山市」を含む地物だけを抽出する。
+// 属性から絞り込めた場合は true 側の配列を、判定できない場合は null を返す
+// （呼び出し側で行政区域境界とのポリゴン交差判定にフォールバックする）。
+function filterToMatsuyamaByAttribute(features) {
+  const matched = features.filter((f) =>
+    SEDIMENT_CITY_FIELD_CANDIDATES.some((key) => {
+      const v = f.properties?.[key];
+      return typeof v === 'string' && v.includes('松山市');
+    }),
+  );
+  return matched.length > 0 ? matched : null;
 }
 
 function resolveShelterName(properties) {
@@ -466,37 +505,39 @@ async function main() {
     console.log(`[${src.label}] -> ${src.out} (${out.length} 地物, placeholder=${placeholder})`);
   }
 
-  // --- 土砂災害警戒区域 ---
-  const sedimentSources = [
-    { dir: 'sediment-steep', fixture: 'sediment-steep.geojson', defaultType: '急傾斜地の崩壊' },
-    { dir: 'sediment-debris', fixture: 'sediment-debris.geojson', defaultType: '土石流' },
-    { dir: 'sediment-landslide', fixture: 'sediment-landslide.geojson', defaultType: '地すべり' },
-  ];
+  // --- 土砂災害警戒区域（1ファイルにA33_001/A33_002属性で3種類・区域区分が混在） ---
+  const sedimentLoad = await loadFeaturesFromDir(
+    join(RAW_DIR, 'sediment'),
+    'sediment.geojson',
+    'sediment',
+  );
+  logPropertyKeys('sediment', sedimentLoad.features);
 
-  const sedimentFeatures = [];
-  let sedimentPlaceholder = boundaryPlaceholder;
-  for (const src of sedimentSources) {
-    const { features, placeholder } = await loadFeaturesFromDir(
-      join(RAW_DIR, src.dir),
-      src.fixture,
-      src.dir,
-    );
-    if (features.length === 0) continue;
-    sedimentPlaceholder ||= placeholder;
-    logPropertyKeys(src.dir, features);
+  const sedimentByAttribute = filterToMatsuyamaByAttribute(sedimentLoad.features);
+  const sedimentInBoundary =
+    sedimentByAttribute ?? sedimentLoad.features.filter((f) => intersectsBoundary(f, boundary));
+  console.log(
+    `[sediment] 松山市域絞り込み: ${sedimentByAttribute ? '属性(A33_006等)' : '行政区域境界'} -> ${sedimentInBoundary.length}件`,
+  );
 
-    const inBoundary = features.filter((f) => intersectsBoundary(f, boundary));
-    for (const f of inBoundary) {
-      const type = detectSedimentTypeFromProperties(f.properties || {}) || src.defaultType;
-      sedimentFeatures.push(
-        simplifyGeometry({
-          type: 'Feature',
-          properties: { type, zone: resolveSedimentZone(f.properties || {}) },
-          geometry: f.geometry,
-        }),
-      );
-    }
-  }
+  // 属性（A33_006等）で絞り込めた場合は行政区域境界（ダミーの場合がある）に依存しない。
+  // 境界での絞り込みにフォールバックした場合のみ、境界がダミーだとplaceholderになる。
+  const sedimentPlaceholder =
+    sedimentLoad.placeholder || (!sedimentByAttribute && boundaryPlaceholder);
+
+  const sedimentFeatures = sedimentInBoundary.map((f) => {
+    const phenomenon = resolvePhenomenonType(f.properties || {});
+    const zone = resolveZoneType(f.properties || {});
+    return simplifyGeometry({
+      type: 'Feature',
+      properties: {
+        phenomenonType: phenomenon.label,
+        zoneType: zone.label,
+        zoneCode: zone.code,
+      },
+      geometry: f.geometry,
+    });
+  });
 
   placeholderByCategory.sediment = sedimentPlaceholder;
 
@@ -510,10 +551,12 @@ async function main() {
         features: sedimentFeatures,
       },
       null,
-      2,
+      sedimentPlaceholder ? 2 : 0,
     ),
   );
-  console.log(`[sediment] -> sediment.json (${sedimentFeatures.length} 地物)`);
+  console.log(
+    `[sediment] -> sediment.json (${sedimentFeatures.length} 地物, placeholder=${sedimentPlaceholder})`,
+  );
 
   // --- 避難所（国土地理院 指定緊急避難場所データポータル CSV） ---
   const shelterCsvRecords = loadShelterRecordsFromCsvDir(join(RAW_DIR, 'shelters'));
