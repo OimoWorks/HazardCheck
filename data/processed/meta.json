@@ -1,10 +1,10 @@
 {
   "placeholder": {
-    "flood-l1": true,
-    "flood-l2": true,
+    "flood-l1": false,
+    "flood-l2": false,
     "sediment": false,
     "shelters": false
   },
-  "generatedAt": "2026-09-09T17:03:15.171Z",
-  "note": "一部のデータがダミー（動作確認用）です。data/raw/ に実データを配置して npm run build:hazard-data を再実行してください。"
+  "generatedAt": "2026-09-10T01:51:06.943Z",
+  "note": "実データから生成されました。"
 }
