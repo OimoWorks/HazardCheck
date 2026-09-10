@@ -158,6 +158,16 @@ npm run dev
 地図タップによる診断は `/api/reverse-geocode` が失敗しても緯度経度表示にフォールバック
 するため、`vite dev` のみでも動作確認できる。
 
+### テスト
+
+`scripts/build-hazard-data.js` の属性解決ロジック（浸水ランクの参照先属性、
+CLI直接実行判定等）に対する軽量なユニットテストがある（追加パッケージ不要、
+Node.js標準の `node:test` を使用）。
+
+```bash
+npm test
+```
+
 ### 環境変数
 
 `.env.example` を参照。

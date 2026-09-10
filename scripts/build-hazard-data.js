@@ -729,7 +729,24 @@ async function main() {
 
 // テスト等からこのファイルをimportしても main() が自動実行されないようにする
 // （CLIとして直接実行された場合のみバッチ処理を走らせる）。
-if (import.meta.url === `file://${process.argv[1]}`) {
+//
+// ⚠️ `metaUrl === \`file://${argv1}\`` という単純な文字列比較は Windows で必ず
+// 失敗する。Windows では import.meta.url が
+// "file:///C:/Users/.../build-hazard-data.js"（スラッシュ区切り・URLエンコード
+// 済み）になる一方、process.argv[1] は "C:\Users\...\build-hazard-data.js"
+// （バックスラッシュ区切りのネイティブパス）になり、両者は文字列として
+// 一致しない。そのため直接実行してもmain()が呼ばれず、ログが一切出ないまま
+// 即終了する不具合が発生していた。fileURLToPath() で import.meta.url を
+// ネイティブパスに変換してから比較することで、Windows・Mac・Linuxすべてで
+// 正しく判定できる（Node は process.argv[1] を実行時に絶対パスへ正規化する
+// ため、`node scripts/build-hazard-data.js` のような相対パス起動でも
+// fileURLToPath(import.meta.url) との単純な等価比較で問題ない）。
+export function isRunAsMainModule(metaUrl, argv1) {
+  if (!argv1) return false;
+  return fileURLToPath(metaUrl) === argv1;
+}
+
+if (isRunAsMainModule(import.meta.url, process.argv[1])) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);
