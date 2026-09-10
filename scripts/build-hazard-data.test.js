@@ -90,3 +90,29 @@ test('resolveFloodRank: 未知のコード値は「不明なコード」とし�
     '不明なコード（A31a_105=99）',
   );
 });
+
+test('resolveFloodRank: 浸水ランクコード1〜6が国交省マニュアル通りの文言に変換される', () => {
+  // 松山市周辺の実データ（A31a_105）で1〜5の出現を確認済み（6は本データ範囲では
+  // 未出現だが、国土交通省「洪水浸水想定区域図作成マニュアル」の6段階に
+  // 揃えてマッピングしている）。表示文言の回帰を防ぐための固定テスト。
+  const expected = {
+    1: '0m以上0.5m未満',
+    2: '0.5m以上3.0m未満',
+    3: '3.0m以上5.0m未満',
+    4: '5.0m以上10.0m未満',
+    5: '10.0m以上20.0m未満',
+    6: '20.0m以上',
+  };
+  for (const [code, label] of Object.entries(expected)) {
+    assert.equal(
+      resolveFloodRank({ A31a_105: Number(code) }, FLOOD_L1_RANK_FIELD_CANDIDATES),
+      label,
+      `code=${code}`,
+    );
+    assert.equal(
+      resolveFloodRank({ A31a_205: Number(code) }, FLOOD_L2_RANK_FIELD_CANDIDATES),
+      label,
+      `code=${code}`,
+    );
+  }
+});
