@@ -120,7 +120,10 @@ npm run build:hazard-data
 実行時のコンソールに、洪水・土砂災害区域データで検出された属性（列）名の一覧が出力される。
 国土数値情報の属性名は年度・提供形式によって変わることがあるため、`浸水ランク` などの
 想定列名で解決できなかった場合は、`scripts/build-hazard-data.js` 内の
-`FLOOD_RANK_FIELD_CANDIDATES` 等にコンソールで確認した実際の列名を追記して再実行すること。
+`FLOOD_L1_RANK_FIELD_CANDIDATES` / `FLOOD_L2_RANK_FIELD_CANDIDATES` にコンソールで確認した
+実際の列名を追記して再実行すること。浸水ランクの属性は
+`A31a_105`（計画規模）/ `A31a_205`（想定最大規模）が正しい列（要出典確認）で、
+`A31a_101` 等の似た名前の属性（河川コード等）と取り違えないよう注意する。
 
 `data/raw/flood-*/` `data/raw/sediment/` `data/raw/matsuyama-boundary/` に実データが
 1件も見つからない場合は、動作確認用のダミーGeoJSON（`scripts/fixtures/`）で代替され、

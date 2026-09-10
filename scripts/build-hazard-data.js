@@ -32,25 +32,71 @@ const RAW_DIR = join(ROOT, 'data', 'raw');
 const PROCESSED_DIR = join(ROOT, 'data', 'processed');
 const FIXTURES_DIR = join(__dirname, 'fixtures');
 
-const FLOOD_RANK_FIELD_CANDIDATES = [
+// ⚠️ 国土数値情報 洪水浸水想定区域データ（河川単位）の属性コードは、
+// A31a_105 = 浸水ランク（計画規模）、A31a_205 = 浸水ランク（想定最大規模）
+// である（製品仕様書より）。以前このリストに A31a_101 のような無関係な属性
+// （河川コード等、10桁の数値になることが多い）が誤って含まれており、
+// 本来より先にヒットしてしまうことで、浸水ランクの代わりに河川コードが
+// そのまま表示される不具合があった。A31a_105 / A31a_205 を最優先候補にする。
+const FLOOD_L1_RANK_FIELD_CANDIDATES = [
+  'A31a_105',
+  'A31b_105',
   '浸水ランク',
   '浸水深ランク',
-  'A31a_201',
-  'A31b_201',
-  'A31a_101',
-  'A31b_101',
+  'rank',
+  'RANK',
+];
+const FLOOD_L2_RANK_FIELD_CANDIDATES = [
+  'A31a_205',
+  'A31b_205',
+  '浸水ランク',
+  '浸水深ランク',
   'rank',
   'RANK',
 ];
 
-// 想定浸水深ランクのコード→表示ラベル対応（要検証。実データがコード値の場合のみ使用）。
+// 参考: 誤って表示されうる無関係な属性（河川コード等）。ダンプ結果の目視確認用に
+// ログへ一緒に出力する（*_FIELD_CANDIDATES には含めない）。
+const FLOOD_KNOWN_UNRELATED_FIELDS = ['A31a_101', 'A31a_102', 'A31a_103', 'A31a_104'];
+
+// 浸水ランクのコード→表示ラベル対応。
+//
+// ⚠️ 要検証: 国土数値情報の浸水ランクコードには、少なくとも次の2つの体系が
+// 確認されている（年度・データ提供元により異なる）。
+//   (a) 1〜6 の6段階（計画規模・想定最大規模で共通のコード）
+//   (b) 十の位で計画規模(1x)・想定最大規模(2x)を区別し、一の位で深さランクを
+//       表す2桁のコード（想定最大規模のみ「家屋倒壊等氾濫想定区域」に相当する
+//       追加区分 27 を持つ場合がある）
+// このリポジトリでは実データの製品仕様書PDFにネットワーク制約で
+// アクセスできず、また実際のコード出現値をこの環境で確認できなかったため、
+// 両方の体系をここに記載し、未知のコードは「不明」として明示的に表示する
+// （誤ったラベルを確信度高く表示するより安全なため）。
+// `npm run build:hazard-data` 実行時に、A31a_105/205 の実際の出現値一覧が
+// コンソールに出力されるので、そこで確認したコードと本表を突き合わせ、
+// 必要であれば修正すること。
 const FLOOD_RANK_CODE_MAP = {
+  // (a) 1〜6の6段階
   1: '0.5m未満',
   2: '0.5m以上3.0m未満',
   3: '3.0m以上5.0m未満',
   4: '5.0m以上10.0m未満',
   5: '10.0m以上20.0m未満',
   6: '20.0m以上',
+  // (b) 計画規模（1x）
+  11: '0.5m未満',
+  12: '0.5m以上3.0m未満',
+  13: '3.0m以上5.0m未満',
+  14: '5.0m以上10.0m未満',
+  15: '10.0m以上20.0m未満',
+  16: '20.0m以上',
+  // (b) 想定最大規模（2x）
+  21: '0.5m未満',
+  22: '0.5m以上3.0m未満',
+  23: '3.0m以上5.0m未満',
+  24: '5.0m以上10.0m未満',
+  25: '10.0m以上20.0m未満',
+  26: '20.0m以上',
+  27: '家屋倒壊等氾濫想定区域（氾濫流）',
 };
 
 // 土砂災害警戒区域データ（国土数値情報 A33）は、3種類の現象・区域区分が
@@ -161,14 +207,44 @@ function logPropertyKeys(sourceLabel, features) {
   console.log(`[${sourceLabel}] 検出された属性キー: ${[...keys].join(', ') || '(なし)'}`);
 }
 
-function resolveFloodRank(properties) {
-  for (const key of FLOOD_RANK_FIELD_CANDIDATES) {
+// 指定した属性の実際の出現値一覧（全地物走査）をコンソールに出力する。
+// 浸水ランク等、コード値の意味を製品仕様書と突き合わせて検証する際に使う。
+function logFieldValueDistribution(sourceLabel, features, fields) {
+  for (const field of fields) {
+    const counts = new Map();
+    let presentCount = 0;
+    for (const f of features) {
+      const v = f.properties?.[field];
+      if (v === undefined || v === null || v === '') continue;
+      presentCount++;
+      counts.set(v, (counts.get(v) ?? 0) + 1);
+    }
+    if (presentCount === 0) {
+      console.log(`[${sourceLabel}] ${field}: 属性なし（この地物集合には存在しない）`);
+      continue;
+    }
+    const summary = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([v, n]) => `${JSON.stringify(v)}×${n}`)
+      .join(', ');
+    console.log(
+      `[${sourceLabel}] ${field}: ${presentCount}件に存在, 出現値(上位20) = ${summary}${counts.size > 20 ? ` ...ほか${counts.size - 20}種` : ''}`,
+    );
+  }
+}
+
+function resolveFloodRank(properties, fieldCandidates) {
+  for (const key of fieldCandidates) {
     if (key in properties && properties[key] !== null && properties[key] !== '') {
       const raw = properties[key];
       const str = String(raw);
       if (/m未満|m以上/.test(str)) return str;
-      if (FLOOD_RANK_CODE_MAP[raw]) return FLOOD_RANK_CODE_MAP[raw];
-      return str;
+      if (FLOOD_RANK_CODE_MAP[raw] !== undefined) return FLOOD_RANK_CODE_MAP[raw];
+      // 候補属性は見つかったが既知のコード表に該当しない場合、それらしい
+      // 文言に見せかけて誤表示するのではなく、未知のコードであることを
+      // そのまま明示する（例: 河川コードのような無関係な値が紛れ込んだ場合の保険）。
+      return `不明なコード（${key}=${str}）`;
     }
   }
   return '不明';
@@ -455,8 +531,20 @@ async function main() {
 
   // --- 洪水浸水想定区域 ---
   const floodSources = [
-    { dir: 'flood-l1', fixture: 'flood-l1.geojson', out: 'flood-l1.json', label: 'flood-l1' },
-    { dir: 'flood-l2', fixture: 'flood-l2.geojson', out: 'flood-l2.json', label: 'flood-l2' },
+    {
+      dir: 'flood-l1',
+      fixture: 'flood-l1.geojson',
+      out: 'flood-l1.json',
+      label: 'flood-l1',
+      rankFieldCandidates: FLOOD_L1_RANK_FIELD_CANDIDATES,
+    },
+    {
+      dir: 'flood-l2',
+      fixture: 'flood-l2.geojson',
+      out: 'flood-l2.json',
+      label: 'flood-l2',
+      rankFieldCandidates: FLOOD_L2_RANK_FIELD_CANDIDATES,
+    },
   ];
 
   for (const src of floodSources) {
@@ -468,12 +556,18 @@ async function main() {
     const placeholder = ownPlaceholder || boundaryPlaceholder;
     placeholderByCategory[src.label] = placeholder;
     logPropertyKeys(src.label, features);
+    // 浸水ランクとして実際に使う属性の出現値を目視確認できるよう、候補と
+    // 紛れやすい無関係な属性（河川コード等）も含めてダンプする。
+    logFieldValueDistribution(src.label, features, [
+      ...src.rankFieldCandidates,
+      ...FLOOD_KNOWN_UNRELATED_FIELDS,
+    ]);
 
     const inBoundary = features.filter((f) => intersectsBoundary(f, boundary));
     const out = inBoundary.map((f) =>
       simplifyGeometry({
         type: 'Feature',
-        properties: { rank: resolveFloodRank(f.properties || {}) },
+        properties: { rank: resolveFloodRank(f.properties || {}, src.rankFieldCandidates) },
         geometry: f.geometry,
       }),
     );
@@ -633,7 +727,18 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// テスト等からこのファイルをimportしても main() が自動実行されないようにする
+// （CLIとして直接実行された場合のみバッチ処理を走らせる）。
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+export {
+  resolveFloodRank,
+  FLOOD_L1_RANK_FIELD_CANDIDATES,
+  FLOOD_L2_RANK_FIELD_CANDIDATES,
+  FLOOD_RANK_CODE_MAP,
+};
