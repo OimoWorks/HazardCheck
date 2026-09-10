@@ -4,6 +4,16 @@
 // 別の場所（学校・施設等）の住所を誤って返すことがあるため、
 // 検索文字列と結果文字列それぞれから最初の番地数字を抽出して比較する。
 
+// Google Geocoding は premise / formatted_address を全角数字・全角ハイフンで
+// 返すことがある（例: "７７５－１"、"...中通７７５−１"）。ROOFTOP精度の正しい
+// 結果であっても、全角/半角の違いだけで数字比較が食い違ってしまわないよう、
+// 比較前に全角数字→半角、各種ハイフン風記号→半角ハイフンに統一する。
+function normalizeDigitsAndHyphens(str) {
+  return str
+    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/[－ー−‐‑–—〜～]/g, '-');
+}
+
 // Google Geocoding の formatted_address は "日本、〒799-2434 愛媛県松山市中通甲775-1"
 // のように郵便番号を先頭に含むことが多く、これを除去せずに「最初の数字」を
 // 抽出すると郵便番号（799）を番地と誤認してしまう。
@@ -13,13 +23,15 @@ function stripPostalCode(str) {
 
 /**
  * 文字列中で最初に出現する数字の並びを抽出する（住所の「番地」を想定）。
- * 郵便番号表記は事前に取り除いてから判定する。
+ * 全角数字・全角ハイフン等の正規化、郵便番号の除去を行ってから判定する。
  * 例: "愛媛県松山市中通甲775-1" → 775
  * 例: "日本、〒799-2434 愛媛県松山市中通甲775-1" → 775（799ではない）
+ * 例: "愛媛県松山市中通７７５−１" → 775（全角でも正しく775と認識する）
  */
 export function extractPrimaryNumber(str) {
   if (!str) return null;
-  const cleaned = stripPostalCode(String(str));
+  const normalized = normalizeDigitsAndHyphens(String(str));
+  const cleaned = stripPostalCode(normalized);
   const match = cleaned.match(/[0-9]+/);
   return match ? Number(match[0]) : null;
 }
